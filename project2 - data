@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Mar 22 15:21:53 2022
+
+@author: sbentovim
+"""
+# import libraries
+import pandas as pd
+import numpy as np, gc
+
+from sklearn.model_selection import train_test_split
+
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from category_encoders.woe import WOEEncoder
+from sklearn.compose import ColumnTransformer
+import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# display columns
+pd.set_option('display.max_columns', None)
+pd.set_option('display.max_rows', None)
+
+# read in the data
+train_transaction = pd.read_csv('ieee-fraud-detection/train_transaction.csv')
+train_identity = pd.read_csv('ieee-fraud-detection/train_identity.csv')
+test_transaction = pd.read_csv('ieee-fraud-detection/test_transaction.csv')
+test_identity = pd.read_csv('ieee-fraud-detection/test_identity.csv')
+sample_submission = pd.read_csv('ieee-fraud-detection/sample_submission.csv')
+
+# merge transaction and identity
+
+train_df = train_transaction.merge(train_identity, how="left", on="TransactionID")
+test_df = test_transaction.merge(test_identity, how="left", on="TransactionID")
+
+
+#EDA GRAPHS -----------------------------------    
+
+#missing values graph 
+    
+null_variables = train_df.isnull().sum()/len(train_df) * 100
+null_variables = null_variables.drop(null_variables[null_variables == 0].index).sort_values(ascending=False)[:500]
+
+plt.subplots(figsize=(40,10))
+plt.xticks(rotation='90')
+sns.barplot(null_variables.index, null_variables)
+plt.xlabel('Features', fontsize=20)
+plt.ylabel('Missing rate', fontsize=20);
+
+#fraud graph
+plt.subplots(figsize=(10,5))
+sns.countplot(train_df['isFraud'], palette=["#FFD500", "#005BBB"])
+plt.show()
+print('From total data ',np.round(train_df[train_df['isFraud']==1].shape[0]/train_df.shape[0]*100,2),'% contains fraud train')
+print('From total data ',np.round(train_df[train_df['isFraud']==0].shape[0]/train_df.shape[0]*100,2),'% contains legit train')    
+
+#transaction date/time
+plt.subplots(figsize=(15,5))
+plt.hist(train_df['TransactionDT'], label='train', bins=50, color="#005BBB");
+plt.hist(test_df['TransactionDT'], label='test', bins=50, color="#FFD500");
+plt.legend();
+plt.title('Transaction dates')
+
+#transaction hour 
+train_df['hour'] = (train_df['TransactionDT']//(3600))%24
+test_df['hour'] = (test_df['TransactionDT']//(3600))%24
+
+train_hour = (train_df.groupby(['isFraud'])['hour']
+                     .value_counts(normalize=True)
+                     .rename('percentage')
+                     .mul(100)
+                     .reset_index()
+                     .sort_values('hour'))
+
+plt.subplots(figsize=(10,6))
+sns.barplot(x="hour", y="percentage", hue="isFraud", data=train_hour, palette=["#FFD500", "#005BBB"]);
+
+#transaction AMT 
+fig, ax = plt.subplots(1, 2, figsize=(18,4))
+
+time_val = train_df['TransactionAmt'].values
+
+sns.distplot(time_val, ax=ax[0], color='#FFD500')
+ax[0].set_title('Distribution of TransactionAmt', fontsize=14)
+ax[1].set_xlim([min(time_val), max(time_val)])
+
+sns.distplot(np.log(time_val), ax=ax[1], color='#005BBB')
+ax[1].set_title('Distribution of LOG TransactionAmt', fontsize=14)
+ax[1].set_xlim([min(np.log(time_val)), max(np.log(time_val))])
+
+plt.show()
+
+
+#Product CD
+plt.figure(figsize=(12,6))
+
+train_ProductCD = (train_df.groupby(['isFraud'])['ProductCD']
+                     .value_counts(normalize=True)
+                     .rename('percentage')
+                     .mul(100)
+                     .reset_index()
+                     .sort_values('ProductCD'))
+sns.barplot(x="ProductCD", y="percentage", hue="isFraud", data=train_ProductCD, palette=["#FFD500", "#005BBB"]);
+
+
+
+
+
+#ensure all columns are named the same 
+
+test_df = test_df.rename(columns = {'id-01' : 'id_01', 'id-02' : 'id_02', 
+                         'id-03' : 'id_03', 'id-04' : 'id_04', 
+                         'id-05' : 'id_05', 'id-06' : 'id_06', 
+                         'id-07' : 'id_07', 'id-08' : 'id_08', 
+                         'id-09' : 'id_09', 'id-10' : 'id_10',
+                         'id-11' : 'id_11', 'id-12' : 'id_12', 
+                         'id-13' : 'id_13', 'id-14' : 'id_14', 
+                         'id-15' : 'id_15', 'id-16' : 'id_16', 
+                         'id-17' : 'id_17', 'id-18' : 'id_18', 
+                         'id-19' : 'id_19', 'id-20' : 'id_20', 
+                         'id-21' : 'id_21', 'id-22' : 'id_22', 
+                         'id-23' : 'id_23', 'id-24' : 'id_24', 
+                         'id-25' : 'id_25', 'id-26' : 'id_26', 
+                         'id-27' : 'id_27', 'id-28' : 'id_28', 
+                         'id-29' : 'id_29', 'id-30' : 'id_30', 
+                         'id-31' : 'id_31', 'id-32' : 'id_32', 
+                         'id-33' : 'id_33', 'id-34' : 'id_34', 
+                         'id-35' : 'id_35', 'id-36' : 'id_36', 
+                         'id-37' : 'id_37', 'id-38' : 'id_38'})
+
+
+# create an hour variable from datetime stamp
+def hour_feat(f):
+    #encode as 0-23
+    hours = f / (3600)        
+    encoded_hours = np.floor(hours) % 24
+    return encoded_hours
+
+train_df['hour'] = hour_feat(train_df['TransactionDT'])
+test_df['hour'] = hour_feat(test_df['TransactionDT'])
+
+# sort covariates in to categorical and numeric
+cat_cols = ['ProductCD', 'card1', 'card2', 'card3', 'card4', 'card5', 'card6', 
+               'addr1', 'addr2', 'P_emaildomain', 'R_emaildomain', 'M1',
+               'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M8', 'M9', 'DeviceType', 'DeviceInfo',
+               'id_12', 'id_13', 'id_14', 'id_15', 'id_16', 'id_17', 'id_18', 'id_19', 'id_20',
+               'id_21', 'id_22', 'id_23', 'id_24', 'id_25', 'id_26', 'id_27', 'id_28', 'id_29', 'id_30',
+               'id_31', 'id_32', 'id_33', 'id_34', 'id_35', 'id_36', 'id_37', 'id_38']
+
+exclude = ['TransactionID', 'TransactionDT', 'isFraud']
+num_cols = [c for c in train_df.columns if (c not in cat_cols) & (c not in exclude)]
+
+    
+# DROP MORE THAN 90% NA'S --------------------------------------------------------------------------
+
+col_na = train_df.isna().sum()
+drop_na = col_na[(col_na/ train_df.shape[0]) > 0.9].index
+
+use_cols = [c for c in train_df.columns if c not in drop_na]
+cat_cols = [c for c in cat_cols if c not in drop_na]
+num_cols = [c for c in num_cols if c not in drop_na]
+
+train_df[cat_cols] = train_df[cat_cols].astype(str)
+train_df[num_cols] = train_df[num_cols].astype(np.float)
+train_df = train_df[use_cols]
+
+use_cols_test = use_cols.remove("isFraud")
+
+test_df[cat_cols] = test_df[cat_cols].astype(str)
+test_df[num_cols] = test_df[num_cols].astype(np.float)
+test_df = test_df[use_cols_test]
+
+
+
+# IMPUTING MISSING VALUES ----------------------------------------------------------------------------
+
+# fill numeric NAs with median
+median_train = train_df[num_cols].median() 
+median_test = test_df[num_cols].median()
+train_df[num_cols] = train_df[num_cols].fillna(median_train)
+test_df[num_cols] = test_df[num_cols].fillna(median_test)
+
+# fill categorical NAs with "missing"
+train_df[cat_cols] = train_df[cat_cols].replace("nan", "missing")
+test_df[cat_cols] = test_df[cat_cols].replace("nan", "missing")
+
+
+# REMOVE COLUMNS --------------------------------------------------------------------------------------
+
+train_df = train_df.drop(columns=['TransactionID', 'TransactionDT'])
+test_df = test_df.drop(columns=['TransactionID' , 'TransactionDT'])
+
+# SPLIT TRAIN AND VALIDATION -----------------------------------------------------------------------------
+
+response = 'isFraud'
+num_cols = train_df.select_dtypes(include = np.number).columns
+cat_cols = train_df.select_dtypes(exclude = np.number).columns
+
+num_cols = [c for c in num_cols if c != response]
+
+train_x, val_x, train_y, val_y = train_test_split(train_df[num_cols+list(cat_cols)], 
+                                    train_df['isFraud'], test_size=0.2)
+
+
+# CATEGORICAL ENCODING ----------------------------------------------------------
+
+ohe=[]
+emb=[]
+for c in cat_cols:
+    if train_x[c].nunique() < 5:
+        ohe.append(c)
+    else:
+        emb.append(c)
+        
+# Numeric columns will be scaled by StandardScaler
+scaler = StandardScaler()
+
+# Categorical with < 5 unique values will be One Hot Encoded
+ohe = OneHotEncoder(handle_unknown='ignore')
+
+# Categorical with >= 5 unique values will be encoded using Weight of Evidence
+woe = WOEEncoder()
+
+column_trans = ColumnTransformer(
+    [ ('scaler',scaler, num_cols),
+    ('ohe', ohe, ohe),
+    ('woe', woe, emb)], remainder='passthrough', n_jobs=-1)
+
+train_x_transformed = column_trans.fit_transform(train_x, train_y)
+val_x_transformed = column_trans.transform(val_x)
+test_x_transformed = column_trans.transform(test_df)
+
+print(train_x_transformed.shape, val_x_transformed.shape, test_x_transformed.shape)
+
+
